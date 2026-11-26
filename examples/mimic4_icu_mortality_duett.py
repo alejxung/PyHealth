@@ -267,6 +267,9 @@ def main() -> None:
         "--ablation", default="base", choices=[*recipe.ABLATIONS, "all"]
     )
     parser.add_argument("--seed", type=int, default=2020)
+    parser.add_argument(
+        "--device", default="cuda" if torch.cuda.is_available() else "cpu"
+    )
     parser.add_argument("--pretrain-epochs", type=int, default=None)
     parser.add_argument("--finetune-epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=512)
@@ -278,6 +281,7 @@ def main() -> None:
         help="Only the first 1,000 patients (MIMIC4EHRDataset dev).",
     )
     args = parser.parse_args()
+    recipe.DEVICE = torch.device(args.device)
     synthetic = args.root is None
     if args.pretrain_epochs is None:
         args.pretrain_epochs = 5 if synthetic else 30

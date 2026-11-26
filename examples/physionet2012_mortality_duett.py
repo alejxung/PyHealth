@@ -142,6 +142,11 @@ ABLATIONS: dict[str, list[Config]] = {
         for d in (16, 32)
     ],
 }
+# The configs worth re-running with more seeds.
+_BY_NAME = {c.name: c for group in ABLATIONS.values() for c in group}
+ABLATIONS["seeds"] = [
+    _BY_NAME[n] for n in ("base", "no_ssl", "no_aug_mask", "lr=0.0003", "n_bins=16")
+]
 
 
 class PhysioNet2012MortalityWithStatics(PhysioNet2012Mortality):
@@ -308,6 +313,8 @@ def warmup_inverse_sqrt(
 
 # Input field names of DuETT; the MIMIC-IV example sets the pre-binned ones.
 MODEL_FIELDS: dict[str, Any] = {"static_key": "static"}
+# Set from ``--device`` in ``main``.
+DEVICE = torch.device("cpu")
 
 
 def make_model(samples: Any, config: Config, **overrides: Any) -> DuETT:
@@ -321,7 +328,7 @@ def make_model(samples: Any, config: Config, **overrides: Any) -> DuETT:
         "dropout": config.dropout,
     }
     kwargs.update(overrides)
-    return DuETT(samples, **kwargs)
+    return DuETT(samples, **kwargs).to(DEVICE)
 
 
 @torch.no_grad()
@@ -342,7 +349,7 @@ def pretrain(
     """Pre-trains an encoder (or loads the cached one) and returns its weights."""
     path = Path(args.output) / f"pretrain_{config.pretrain_key()}_seed{args.seed}.pt"
     if path.exists():
-        return torch.load(path)
+        return torch.load(path, map_location=DEVICE)
     torch.manual_seed(args.seed)
     model = make_model(samples, config)
     optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=0.1)
@@ -375,7 +382,7 @@ def pretrain(
 @torch.no_grad()
 def evaluate(model: DuETT, data: dict, size: int) -> dict[str, float]:
     model.eval()
-    probs = [model(**b)["y_prob"].view(-1) for b in batches(data, size)]
+    probs = [model(**b)["y_prob"].view(-1).cpu() for b in batches(data, size)]
     return binary_metrics_fn(
         data["mortality"].view(-1).numpy(),
         torch.cat(probs).numpy(),
@@ -453,6 +460,11 @@ def main() -> None:
     parser.add_argument("--output", default="duett_physionet2012")
     parser.add_argument("--ablation", default="base", choices=[*ABLATIONS, "all"])
     parser.add_argument("--seed", type=int, default=2020)
+    parser.add_argument(
+        "--device",
+        default="cuda" if torch.cuda.is_available() else "cpu",
+        help="cuda if available; on Apple silicon cpu is faster than mps.",
+    )
     parser.add_argument("--pretrain-epochs", type=int, default=None)
     parser.add_argument("--finetune-epochs", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=512)
@@ -463,6 +475,8 @@ def main() -> None:
         help="Average the weights of the k best fine-tuning epochs.",
     )
     args = parser.parse_args()
+    global DEVICE
+    DEVICE = torch.device(args.device)
     synthetic = args.root is None
     if args.pretrain_epochs is None:
         args.pretrain_epochs = 5 if synthetic else 30
@@ -497,8 +511,16 @@ def main() -> None:
 
     names = list(ABLATIONS) if args.ablation == "all" else [args.ablation]
     configs = list({c: None for n in names for c in ABLATIONS[n]})  # dedupe
+    log = output / "results.jsonl"
+    done = {
+        (r["name"], r["seed"]): r
+        for r in map(json.loads, log.read_text().splitlines() if log.exists() else [])
+    }
     results = []
     for config in configs:
+        if (config.name, args.seed) in done:  # resume an interrupted run
+            results.append(done[config.name, args.seed])
+            continue
         print(f"== {config.name}", flush=True)
         result = fine_tune(samples, config, (train, val, test), args)
         results.append(result)
