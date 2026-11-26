@@ -26,6 +26,11 @@ Usage::
     python examples/mimic4_icu_mortality_duett.py --root /path/to/mimiciv \\
         --split-file mimic-iv-patient-split.json --ablation all
 
+    # With about 13 GB of RAM (free Colab): first write a copy with only the
+    # task's events (about 8% of chartevents, 4% of labevents), then load it.
+    python examples/mimic4_icu_mortality_duett.py --root /path/to/mimiciv \\
+        --prefilter /content/mimiciv_duett --split-file mimic-iv-patient-split.json
+
 ``--split-file`` is the authors' patient split (``train`` / ``test`` subject
 IDs; validation is the first 15% of ``train``) from
 https://github.com/layer6ai-labs/DuETT; without it, patients are split
@@ -34,6 +39,25 @@ and z-scored with training statistics (:func:`fit_value_normalizer`), as in
 the paper; age and the window length are z-scored too.
 
 Only aggregate metrics are printed and saved, never patient-level data.
+
+Results on MIMIC-IV v3.1 (one Colab T4 run, seed 2020, the recipe of
+``physionet2012_mortality_duett.py``: 30 pre-training and 20 fine-tuning
+epochs). 46,337 stays pass the cohort criteria; 27,659 / 4,969 / 5,748 of
+them (about 14% deaths) fall in the authors' train / val / test patients::
+
+    config        val PR-AUC  test PR-AUC  test ROC-AUC
+    base              0.597        0.575         0.885
+    no_ssl            0.571        0.554         0.880
+    no_aug_mask       0.593        0.581         0.886
+    lr=3e-4           0.601        0.571         0.882
+
+Unlike on PhysioNet 2012, pre-training helps on MIMIC-IV (+0.021 test
+PR-AUC, one seed), which has about three times as many training stays. The two
+fine-tuning changes that helped on PhysioNet 2012 are within noise here.
+The paper reports 0.627 PR-AUC and 0.912 ROC-AUC for DuETT on its MIMIC-IV
+cohort after 300 pre-training epochs; ours are lower, as on PhysioNet
+2012. The other ablations ran on PhysioNet 2012 only, as each bin count
+needs its own MIMIC-IV preprocessing (about 40 minutes on Colab).
 """
 
 from __future__ import annotations
