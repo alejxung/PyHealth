@@ -39,6 +39,7 @@ Only aggregate metrics are printed and saved, never patient-level data.
 from __future__ import annotations
 
 import argparse
+import csv
 import gzip
 import hashlib
 import json
@@ -224,6 +225,89 @@ def write_synthetic_mimic(root: Path, n_patients: int = 300, seed: int = 0) -> N
         f.write("itemid,label,fluid,category\n50813,Lactate,Blood,Blood Gas\n")
 
 
+def prefilter_mimic(root: Path, out: Path, window_hours: float = 48.0) -> None:
+    """Writes a smaller copy of MIMIC-IV with only the events the task uses.
+
+    ``MIMIC4EHRDataset`` sorts every event of every table before the task's
+    ``pre_filter`` runs, which needs more memory than a free Colab runtime
+    has. This keeps only the task's items, and only events in the first
+    ``window_hours`` of stays at least that long (labs: of any such stay of
+    the admission), streaming the files in 64 MB blocks. The small tables
+    are linked, not copied.
+
+    Args:
+        root: The MIMIC-IV folder (``hosp/`` and ``icu/``).
+        out: Where to write the copy.
+        window_hours: The task's observation window.
+    """
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.csv as pv
+
+    task = DuETTMortalityMIMIC4(window_hours=window_hours)
+    items = {
+        t: {str(i) for v in task.variables if v.table == t for i in v.itemids}
+        for t in TABLES
+    }
+    fmt = "%Y-%m-%d %H:%M:%S"
+    stays: dict[str, tuple[str, str]] = {}
+    admissions: dict[str, tuple[str, str]] = {}
+    with gzip.open(root / "icu" / "icustays.csv.gz", "rt", newline="") as f:
+        for row in csv.DictReader(f):
+            if not row["intime"] or not row["outtime"]:
+                continue
+            intime = datetime.strptime(row["intime"], fmt)
+            outtime = datetime.strptime(row["outtime"], fmt)
+            if (outtime - intime).total_seconds() < window_hours * 3600:
+                continue
+            start = intime.strftime(fmt)
+            end = (intime + timedelta(hours=window_hours)).strftime(fmt)
+            stays[row["stay_id"]] = (start, end)
+            lo, hi = admissions.get(row["hadm_id"], (start, end))
+            admissions[row["hadm_id"]] = (min(lo, start), max(hi, end))
+
+    for table, folder, key, bounds in (
+        ("chartevents", "icu", "stay_id", stays),
+        ("labevents", "hosp", "hadm_id", admissions),
+    ):
+        source = root / folder / f"{table}.csv.gz"
+        target = out / folder / f"{table}.csv.gz"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        names = pv.open_csv(source).schema.names
+        reader = pv.open_csv(
+            source,
+            read_options=pv.ReadOptions(block_size=1 << 26),
+            parse_options=pv.ParseOptions(newlines_in_values=True),
+            convert_options=pv.ConvertOptions(
+                column_types={name: pa.string() for name in names}
+            ),
+        )
+        kept = total = 0
+        with pa.CompressedOutputStream(str(target), "gzip") as stream:
+            writer = pv.CSVWriter(stream, reader.schema)
+            for batch in reader:
+                total += batch.num_rows
+                batch = batch.filter(
+                    pc.is_in(batch["itemid"], pa.array(sorted(items[table])))
+                )
+                ids = batch[key].to_pylist()
+                lower = pa.array([bounds.get(i, ("~", ""))[0] for i in ids])
+                upper = pa.array([bounds.get(i, ("~", ""))[1] for i in ids])
+                time = batch["charttime"]
+                batch = batch.filter(
+                    pc.and_(pc.greater_equal(time, lower), pc.less(time, upper))
+                )
+                kept += batch.num_rows
+                writer.write_batch(batch)
+            writer.close()
+        print(f"{table}: kept {kept:,} of {total:,} rows", flush=True)
+    for name in ("hosp/patients", "hosp/admissions", "hosp/d_labitems", "icu/icustays"):
+        link = out / f"{name}.csv.gz"
+        link.parent.mkdir(parents=True, exist_ok=True)
+        if not link.exists():
+            link.symlink_to((root / f"{name}.csv.gz").resolve())
+
+
 def load(
     dataset: MIMIC4EHRDataset, n_time_bins: int, args: argparse.Namespace
 ) -> tuple[tuple[dict, dict, dict], Any]:
@@ -280,6 +364,12 @@ def main() -> None:
         action="store_true",
         help="Only the first 1,000 patients (MIMIC4EHRDataset dev).",
     )
+    parser.add_argument(
+        "--prefilter",
+        default=None,
+        help="Write a copy of --root with only the task's events here (once) "
+        "and load that; needed with ~13 GB of RAM.",
+    )
     args = parser.parse_args()
     recipe.DEVICE = torch.device(args.device)
     synthetic = args.root is None
@@ -297,6 +387,10 @@ def main() -> None:
         if synthetic:
             root = str(Path(tmp) / "mimiciv")
             write_synthetic_mimic(Path(root))
+        if args.prefilter and not synthetic:
+            if not (Path(args.prefilter) / "icu" / "icustays.csv.gz").exists():
+                prefilter_mimic(Path(root), Path(args.prefilter))
+            root = args.prefilter
         dataset = MIMIC4EHRDataset(
             root=root,
             tables=TABLES,
