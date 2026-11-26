@@ -46,6 +46,7 @@ from .sequence_embedding import (
 from .armr import ARMR as ARMR
 from .gamenet import GAMENet, GAMENetLayer
 from .jamba_ehr import JambaEHR, JambaLayer
+from .duett import DuETT as DuETT
 from .joint_seq_image import (
     JointSeqImage as JointSeqImage,
 )
