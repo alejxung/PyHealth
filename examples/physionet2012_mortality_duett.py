@@ -55,8 +55,53 @@ Ablations (``--ablation``), none of them in the paper's Table 2:
   width (16 / 32).
 - ``paper``: no pre-training vs. pre-training, a reproduction check of the
   paper's largest ablation effect (not a new ablation).
+- ``seeds``: the configs with the largest single-seed differences, to
+  re-run with ``--seed 2021`` and ``--seed 2022``.
 
 Results are appended to ``<output>/results.jsonl`` and printed as a table.
+Interrupted runs resume: configs already in the file are skipped.
+
+Results (test set, 1,797 stays with about 260 deaths; every config once
+with seed 2020, the ``seeds`` group over seeds 2020-2022 as mean ± std;
+the split is the same for all seeds, so the spread is training noise
+only)::
+
+    config               test PR-AUC    test ROC-AUC
+    base (paper recipe)  0.502 ± 0.005  0.840 ± 0.002
+    no_ssl               0.505 ± 0.003  0.839 ± 0.001
+    no_aug_mask          0.530 ± 0.009  0.845 ± 0.001
+    lr=3e-4              0.525 ± 0.002  0.843 ± 0.002
+    n_bins=16            0.504 ± 0.006  0.843 ± 0.006
+    n_bins=8             0.496          0.845
+    n_bins=64            0.488          0.833
+    alpha=0.05           0.506          0.839
+    alpha=1.0            0.477          0.835
+    no_input_dropout     0.495          0.838
+    neither              0.535          0.846
+    lr=3e-5              0.460          0.828
+    d_embedding=16       0.487          0.835
+    d_embedding=32       0.511          0.839
+
+Findings:
+
+- Time-bin masking (``aug_mask``), a fine-tuning augmentation in the code
+  but not the paper, hurts at our budget: removing it gains about 0.03
+  PR-AUC over three seeds, about three times its seed standard
+  deviation. A higher fine-tuning learning rate (3e-4 instead of 1e-4)
+  gains about as much. Both suggest that the paper's regularization is
+  tuned for 50 fine-tuning epochs, not 20.
+- Pre-training input dropout makes no difference (0.495 vs. 0.497 with
+  one seed); removing both tricks equals removing only the time-bin
+  masking.
+- 16 to 32 bins are best; 64 bins is worse and twice as slow. The
+  16-bin gain seen with one seed was not there with three.
+- A presence-loss weight of 1.0 hurts; 0.05 and the code's 0.2 tie.
+- With 30 pre-training epochs, self-supervised pre-training does not help
+  (0.502 vs. 0.505 without it). The paper reports a gain after 300
+  epochs, which we could not afford, so we do not claim a contradiction.
+- Our best single-run test PR-AUC (0.535) and ROC-AUC (0.849) are below the paper's
+  0.564 and 0.872 for DuETT on PhysioNet 2012. The shorter training, a
+  different split and a single small test set all plausibly contribute.
 """
 
 from __future__ import annotations
