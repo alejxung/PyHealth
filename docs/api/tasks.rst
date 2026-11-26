@@ -238,6 +238,7 @@ Available Tasks
     Chapman-Shaoxing ECG Classification <tasks/pyhealth.tasks.ChapmanShaoxingSuperclassClassification>
     PhysioNet 2012 Forecasting <tasks/pyhealth.tasks.PhysioNet2012Forecasting>
     PhysioNet 2012 Mortality <tasks/pyhealth.tasks.PhysioNet2012Mortality>
+    DuETT ICU Mortality (MIMIC-IV) <tasks/pyhealth.tasks.DuETTMortalityMIMIC4>
     Disease Progression (MIMIC-IV + Chest ImaGenome) <tasks/pyhealth.tasks.DiseaseProgressionMIMIC4>
     DKA Prediction (MIMIC-IV) <tasks/pyhealth.tasks.dka>
     Drug Recommendation <tasks/pyhealth.tasks.drug_recommendation>

@@ -46,6 +46,11 @@ from .chapman_shaoxing_classification import (
     ChapmanShaoxingSNOMEDClassification as ChapmanShaoxingSNOMEDClassification,
     ChapmanShaoxingSuperclassClassification as ChapmanShaoxingSuperclassClassification,
 )
+from .duett_mortality_mimic4 import (
+    DuETTMortalityMIMIC4 as DuETTMortalityMIMIC4,
+    fit_value_normalizer as fit_value_normalizer,
+    normalize_values as normalize_values,
+)
 from .physionet2012_mortality import (
     PhysioNet2012Mortality as PhysioNet2012Mortality,
     physionet2012_mortality_statistics as physionet2012_mortality_statistics,

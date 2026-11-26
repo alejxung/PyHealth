@@ -277,7 +277,7 @@ def synthetic_samples(n: int = 600, seed: int = 0) -> Any:
 def to_tensors(samples: Any) -> dict[str, torch.Tensor]:
     """All samples as stacked tensors (PhysioNet 2012 fits in memory)."""
     batch = next(iter(get_dataloader(samples, batch_size=len(samples))))
-    return {k: batch[k] for k in ("x", "x_time", "static", "mortality")}
+    return {k: v for k, v in batch.items() if isinstance(v, torch.Tensor)}
 
 
 def batches(
@@ -306,15 +306,19 @@ def warmup_inverse_sqrt(
     return torch.optim.lr_scheduler.LambdaLR(optimizer, factor)
 
 
+# Input field names of DuETT; the MIMIC-IV example sets the pre-binned ones.
+MODEL_FIELDS: dict[str, Any] = {"static_key": "static"}
+
+
 def make_model(samples: Any, config: Config, **overrides: Any) -> DuETT:
     kwargs = {
+        **MODEL_FIELDS,
         "n_time_bins": config.n_time_bins,
         "d_embedding": config.d_embedding,
         "presence_loss_weight": config.presence_loss_weight,
         "pretrain_input_dropout": config.pretrain_input_dropout,
         "aug_mask": config.aug_mask,
         "dropout": config.dropout,
-        "static_key": "static",
     }
     kwargs.update(overrides)
     return DuETT(samples, **kwargs)
